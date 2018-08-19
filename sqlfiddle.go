@@ -7,7 +7,13 @@ import (
 )
 
 const (
-	Mysql5_6 = 9
+	Mysql5_6      = 9
+	Oracle11gR2   = 4
+	PostgreSQL96  = 17
+	PostgreSQL93  = 15
+	SQLite_WebSQL = 7
+	SQLite_SQLjs  = 5
+	MSSQL2017     = 18
 )
 
 /*
@@ -31,6 +37,21 @@ const (
 }
 */
 
+const (
+	defaultBaseURL = "http://sqlfiddle.com"
+)
+
+type Fiddle struct {
+	baseURL string
+}
+
+func NewFiddle(baseURL string) *Fiddle {
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	return &Fiddle{baseURL}
+}
+
 type column struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
@@ -48,13 +69,17 @@ type response struct {
 	Structures []schemaStructure `json:"schema_structure"`
 }
 
-func CreateSchema(dbType int, sql string) (*response, error) {
+func (f *Fiddle) CreateSchema(dbType int, sql string) (*response, error) {
 	payload := map[string]interface{}{"statement_separator": ";", "db_type_id": dbType, "ddl": sql}
 	bs, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	req := http.NewRequest("POST", "http://sqlfiddle.com/backend/createSchema?_action=create", bytes.NewBuffer(bs))
+	req, err := http.NewRequest("POST", f.baseURL+"/backend/createSchema?_action=create", bytes.NewBuffer(bs))
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -62,6 +87,81 @@ func CreateSchema(dbType int, sql string) (*response, error) {
 	defer resp.Body.Close()
 
 	var res response
+	err = json.NewDecoder(resp.Body).Decode(&res)
+	if err != nil {
+		return nil, err
+	}
+
+	return &res, nil
+}
+
+/*
+http://sqlfiddle.com/backend/executeQuery?_action=query
+
+{"db_type_id":9,"schema_short_code":"ed3b0c","statement_separator":";","sql":"select * from person;"}
+
+{
+  "ID" : 2,
+  "sets" : [ {
+    "RESULTS" : {
+      "COLUMNS" : [ "id", "name", "birthday" ],
+      "DATA" : [ ]
+    },
+    "SUCCEEDED" : true,
+    "STATEMENT" : "select * from person",
+    "EXECUTIONTIME" : 2,
+    "EXECUTIONPLANRAW" : {
+      "COLUMNS" : [ "id", "select_type", "table", "type", "possible_keys", "key", "key_len", "ref", "rows", "filtered", "Extra" ],
+      "DATA" : [ [ "1", "SIMPLE", "person", "ALL", null, null, null, null, "1", "100.00", null ] ]
+    },
+    "EXECUTIONPLAN" : {
+      "COLUMNS" : [ "id", "select_type", "table", "type", "possible_keys", "key", "key_len", "ref", "rows", "filtered", "Extra" ],
+      "DATA" : [ [ "1", "SIMPLE", "person", "ALL", null, null, null, null, "1", "100.00", null ] ]
+    }
+  } ]
+}
+*/
+type sqlResult struct {
+	Statement     string `json:"STATEMENT"`
+	Succeeded     bool   `json:"SUCCEEDED"`
+	ExecutionTime int    `json:"EXECUTIONTIME"`
+	Results       struct {
+		Columns []string        `json:"COLUMNS"`
+		Data    [][]interface{} `json:"DATA"`
+	} `json:"RESULTS"`
+	ExecutionPlanRaw struct {
+		Columns []string        `json:"COLUMNS"`
+		Data    [][]interface{} `json:"DATA"`
+	} `json:"EXECUTIONPLANRAW"`
+	ExecutionPlan struct {
+		Columns []string        `json:"COLUMNS"`
+		Data    [][]interface{} `json:"DATA"`
+	} `json:"EXECUTIONPLAN"`
+}
+
+type sqlResponse struct {
+	Id   int64 `json:"ID"`
+	Sets []sqlResult
+}
+
+func (f *Fiddle) RunSQL(dbType int, code, sql string) (*sqlResponse, error) {
+	payload := map[string]interface{}{"schema_short_code": code, "statement_separator": ";", "db_type_id": dbType, "sql": sql}
+	bs, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest("POST", f.baseURL+"/backend/executeQuery?_action=query", bytes.NewBuffer(bs))
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var res sqlResponse
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		return nil, err
