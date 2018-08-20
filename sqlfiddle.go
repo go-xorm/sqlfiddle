@@ -1,8 +1,14 @@
+// Copyright 2018 The Xorm Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 package sqlfiddle
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -67,6 +73,7 @@ type response struct {
 	Id         string            `json:"_id"`
 	Code       string            `json:"short_code"`
 	Structures []schemaStructure `json:"schema_structure"`
+	ErrorMsg   string            `json:"error"`
 }
 
 func (f *Fiddle) CreateSchema(dbType int, sql string) (*response, error) {
@@ -90,6 +97,10 @@ func (f *Fiddle) CreateSchema(dbType int, sql string) (*response, error) {
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		return nil, err
+	}
+
+	if res.ErrorMsg != "" {
+		return &res, errors.New(res.ErrorMsg)
 	}
 
 	return &res, nil
@@ -124,6 +135,7 @@ http://sqlfiddle.com/backend/executeQuery?_action=query
 type sqlResult struct {
 	Statement     string `json:"STATEMENT"`
 	Succeeded     bool   `json:"SUCCEEDED"`
+	ErrorMessage  string `json:"ERRORMESSAGE"`
 	ExecutionTime int    `json:"EXECUTIONTIME"`
 	Results       struct {
 		Columns []string        `json:"COLUMNS"`
@@ -165,6 +177,15 @@ func (f *Fiddle) RunSQL(dbType int, code, sql string) (*sqlResponse, error) {
 	err = json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		return nil, err
+	}
+
+	for e := range res.Sets {
+		result := res.Sets[e]
+
+		if result.ErrorMessage != "" {
+			return &res, fmt.Errorf("something wrong with sql %q in pos %v, detail: %q",
+				result.Statement, e+1, result.ErrorMessage)
+		}
 	}
 
 	return &res, nil
